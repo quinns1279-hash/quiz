@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>刷题本</title>
+  <!-- 防闪烁：在 Vue 挂载前应用主题 -->
+  <script>
+    (function () {
+      try {
+        var t = JSON.parse(localStorage.getItem('theme') || '"auto"');
+        var eff = t === 'auto'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : t;
+        document.documentElement.dataset.theme = eff;
+      } catch (e) { document.documentElement.dataset.theme = 'light'; }
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" v-cloak>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <div class="brand" @click="view='practice'"><span class="logo logo-light">🐌</span><span class="logo logo-dark">🐽</span> 刷题本</div>
+    <nav class="nav">
+      <button :class="{active: view==='practice'}" @click="view='practice'">练习</button>
+      <button :class="{active: view==='wrongbook'}" @click="view='wrongbook'">
+        错题 <span class="badge" v-if="wrongQuestions.length">{{ wrongQuestions.length }}</span>
+      </button>
+      <button :class="{active: view==='favorites'}" @click="view='favorites'">
+        收藏 <span class="badge" v-if="favoriteQuestions.length">{{ favoriteQuestions.length }}</span>
+      </button>
+      <button :class="{active: view==='records'}" @click="view='records'">记录</button>
+      <button :class="{active: view==='stats'}" @click="view='stats'">统计</button>
+    </nav>
+    <div class="top-actions">
+      <button class="icon-btn" @click="cycleTheme" :title="themeLabel">{{ themeIcon }}</button>
+      <label class="icon-btn" title="导入备份">📥<input type="file" accept="application/json" @change="importData" hidden></label>
+      <button class="icon-btn" @click="exportData" title="导出备份">💾</button>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- 续做提示 -->
+    <div class="resume-banner" v-if="showResumeBanner && lastSession">
+      <span>📌 上次做到：{{ resumeDesc }}</span>
+      <div class="resume-actions">
+        <button class="btn btn-primary btn-sm" @click="resumeLast">继续</button>
+        <button class="btn btn-ghost btn-sm" @click="dismissResume">忽略</button>
+      </div>
+    </div>
+
+    <!-- ============ 练习视图 ============ -->
+    <template v-if="view==='practice'">
+
+      <!-- 统计卡 -->
+      <div class="stats">
+        <div class="stat-card"><div class="stat-num">{{ scopeStat.total }}</div><div class="stat-label">总题数</div></div>
+        <div class="stat-card"><div class="stat-num">{{ scopeStat.attempted }}</div><div class="stat-label">已答</div></div>
+        <div class="stat-card ok"><div class="stat-num">{{ scopeStat.correct }}</div><div class="stat-label">答对</div></div>
+        <div class="stat-card rate"><div class="stat-num">{{ scopeStat.rate }}%</div><div class="stat-label">正确率</div></div>
+      </div>
+
+      <!-- 筛选 -->
+      <div class="filter-bar">
+        <div class="filter-group">
+          <span class="filter-label">科目</span>
+          <button v-for="s in subjects" :key="s.id"
+                  class="chip" :class="{on: currentSubjectId===s.id}"
+                  @click="setSubject(s.id)">{{ s.name }}</button>
+        </div>
+        <div class="filter-group" v-if="hasChapters">
+          <span class="filter-label">章节</span>
+          <button class="chip" :class="{on: currentChapterId==='all'}" @click="setChapter('all')">全部</button>
+          <button v-for="c in currentSubject.chapters" :key="c.id"
+                  class="chip" :class="{on: currentChapterId===c.id}"
+                  @click="setChapter(c.id)">{{ c.name.replace(/（.*$/, '') }}</button>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">题型</span>
+          <button class="chip" :class="{on: currentType==='all'}" @click="setType('all')">全部</button>
+          <button class="chip" :class="{on: currentType==='single'}" @click="setType('single')">单选</button>
+          <button class="chip" :class="{on: currentType==='multiple'}" @click="setType('multiple')">多选</button>
+          <button class="chip" :class="{on: currentType==='judge'}" @click="setType('judge')">判断</button>
+        </div>
+        <div class="filter-group random-group">
+          <span class="filter-label">随机</span>
+          <input type="number" class="num-input" v-model.number="randomCount" min="1" :max="filteredQuestions.length">
+          <button class="btn btn-warning btn-sm" @click="startRandom">🎲 抽题</button>
+        </div>
+      </div>
+
+      <!-- 队列来源提示 -->
+      <div class="queue-hint" v-if="queue">
+        <span>🎯 当前为{{ queue.length }}题随机/重做队列</span>
+        <button class="btn btn-ghost btn-sm" @click="resetQueue">返回正常列表</button>
+      </div>
+
+      <!-- 题目区 -->
+      <div class="exam" v-if="currentQuestion.id">
+        <div class="exam-head">
+          <span class="q-progress">{{ currentIndex + 1 }} / {{ currentQueue.length }}</span>
+          <span class="q-type">{{ TYPE_LABEL[currentQuestion.type] }}</span>
+          <span class="q-subj">{{ currentQuestion.subjectName }}<span v-if="currentQuestion.chapterName"> · {{ currentQuestion.chapterName.replace(/（.*$/, '') }}</span></span>
+          <button class="star" :class="{on: isFavorite(currentQuestion.id)}" @click="toggleFavorite(currentQuestion.id)">⭐</button>
+        </div>
+
+        <div class="q-stem">{{ currentQuestion.stem }}</div>
+
+        <div class="options">
+          <div v-for="opt in currentQuestion.options" :key="opt.key"
+               class="option"
+               :class="{
+                 selected: isSelected(opt.key),
+                 correct: isSubmitted && correctKeysDisplay.includes(opt.key),
+                 wrong: isSubmitted && isSelected(opt.key) && !correctKeysDisplay.includes(opt.key)
+               }"
+               @click="selectOption(opt.key)">
+            <span class="opt-key">{{ opt.key }}</span>
+            <span class="opt-text">{{ opt.text }}</span>
+          </div>
+        </div>
+
+        <!-- 结果与解析 -->
+        <div class="result" v-if="isSubmitted">
+          <div class="result-line" :class="isPeeked ? 'peek' : (isCurrentCorrect ? 'ok' : 'bad')">
+            <template v-if="isPeeked">👁 已查看答案 · 正确答案：{{ correctKeysDisplay.join('、') }}</template>
+            <template v-else>
+              {{ isCurrentCorrect ? '✅ 回答正确' : '❌ 回答错误' }}
+              <span class="ans" v-if="!isCurrentCorrect">正确答案：{{ correctKeysDisplay.join('、') }}</span>
+            </template>
+          </div>
+          <div class="explanation">
+            <div class="exp-title">💡 解析</div>
+            <div class="exp-text">{{ currentQuestion.explanation || '暂无解析' }}</div>
+          </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="controls">
+          <button class="btn btn-ghost" @click="prev" :disabled="currentIndex===0">◀ 上一题</button>
+          <button class="btn btn-warning" @click="resetAnswer">重置</button>
+          <button class="btn btn-primary" @click="submitAnswer" :disabled="!hasSelection || isSubmitted">提交</button>
+          <button class="btn btn-danger" @click="showAnswer" v-if="!isSubmitted">查看答案</button>
+          <button class="btn btn-ghost" @click="next" :disabled="currentIndex>=currentQueue.length-1">下一题 ▶</button>
+        </div>
+      </div>
+
+      <div class="empty" v-else>
+        <p>📭 当前筛选下没有题目</p>
+        <p class="muted">换个科目 / 章节 / 题型试试</p>
+      </div>
+    </template>
+
+    <!-- ============ 错题本 ============ -->
+    <template v-else-if="view==='wrongbook'">
+      <div class="list-head">
+        <h2>❌ 错题本（{{ wrongQuestions.length }}）</h2>
+        <button class="btn btn-primary btn-sm" @click="startWrongRedo" :disabled="!wrongQuestions.length">🔀 重做错题</button>
+      </div>
+      <div class="list">
+        <div v-for="q in wrongQuestions" :key="q.id" class="list-item" @click="openInPractice(q.id)">
+          <span class="q-type-tag">{{ TYPE_LABEL[q.type] }}</span>
+          <span class="list-title">{{ q.stem }}</span>
+          <button class="list-del" @click.stop="removeFromWrong(q.id)" title="移出错题本">✕</button>
+        </div>
+        <div class="empty" v-if="!wrongQuestions.length"><p>🎉 还没有错题，去练习吧</p></div>
+      </div>
+    </template>
+
+    <!-- ============ 收藏 ============ -->
+    <template v-else-if="view==='favorites'">
+      <div class="list-head">
+        <h2>⭐ 收藏（{{ favoriteQuestions.length }}）</h2>
+        <button class="btn btn-primary btn-sm" @click="browseFavorites" :disabled="!favoriteQuestions.length">顺序练习</button>
+      </div>
+      <div class="list">
+        <div v-for="q in favoriteQuestions" :key="q.id" class="list-item" @click="openInPractice(q.id)">
+          <span class="q-type-tag">{{ TYPE_LABEL[q.type] }}</span>
+          <span class="list-title">{{ q.stem }}</span>
+          <button class="list-del star-del" @click.stop="toggleFavorite(q.id)" title="取消收藏">⭐</button>
+        </div>
+        <div class="empty" v-if="!favoriteQuestions.length"><p>⭐ 收藏的题目会出现在这里</p></div>
+      </div>
+    </template>
+
+    <!-- ============ 做题记录 ============ -->
+    <template v-else-if="view==='records'">
+      <div class="list-head">
+        <h2>📝 做题记录</h2>
+        <div class="overall">
+          共 {{ overallStat.total }} 次 · 答对 {{ overallStat.correct }} · 正确率 {{ overallStat.rate }}%
+        </div>
+      </div>
+      <div class="list">
+        <div v-for="(a, i) in recentAttempts" :key="i" class="record-item" @click="openInPractice(a.qid)">
+          <span class="rec-mark" :class="a.isCorrect ? 'ok' : 'bad'">{{ a.isCorrect ? '✓' : '✗' }}</span>
+          <div class="rec-body">
+            <div class="rec-title">{{ qBrief(a.qid) }}</div>
+            <div class="rec-time">{{ fmtTime(a.ts) }}</div>
+          </div>
+        </div>
+        <div class="empty" v-if="!recentAttempts.length"><p>还没有做题记录</p></div>
+      </div>
+    </template>
+
+    <!-- ============ 统计 ============ -->
+    <template v-else-if="view==='stats'">
+      <h2 class="section-title">📊 正确率统计</h2>
+      <p class="muted hint">按"独立题目"统计：每题只要答对过一次即计入答对；正确率 = 答对题数 / 已答题数。</p>
+
+      <h3 class="sub-title">按科目</h3>
+      <table class="stat-table">
+        <thead><tr><th>科目</th><th>总题</th><th>已答</th><th>答对</th><th>正确率</th></tr></thead>
+        <tbody>
+          <tr v-for="s in statsBySubject" :key="s.label">
+            <td>{{ s.label }}</td><td>{{ s.total }}</td><td>{{ s.attempted }}</td>
+            <td>{{ s.correct }}</td><td>{{ s.rate }}%</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 class="sub-title">按题型</h3>
+      <table class="stat-table">
+        <thead><tr><th>题型</th><th>总题</th><th>已答</th><th>答对</th><th>正确率</th></tr></thead>
+        <tbody>
+          <tr v-for="t in statsByType" :key="t.label">
+            <td>{{ t.label }}</td><td>{{ t.total }}</td><td>{{ t.attempted }}</td>
+            <td>{{ t.correct }}</td><td>{{ t.rate }}%</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3 class="sub-title" v-if="hasChapters">按章节（{{ currentSubject.name }}）</h3>
+      <table class="stat-table" v-if="hasChapters">
+        <thead><tr><th>章节</th><th>总题</th><th>已答</th><th>答对</th><th>正确率</th></tr></thead>
+        <tbody>
+          <tr v-for="c in statsByChapter" :key="c.label">
+            <td class="tl">{{ c.label.replace(/（.*$/, '') }}</td><td>{{ c.total }}</td>
+            <td>{{ c.attempted }}</td><td>{{ c.correct }}</td><td>{{ c.rate }}%</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="danger-zone">
+        <button class="btn btn-danger btn-sm" @click="resetAll">🗑 清空全部数据</button>
+      </div>
+    </template>
+
+  </main>
+</div>
+
+<script src="vue.global.js"></script>
+<script src="exam-bank.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
