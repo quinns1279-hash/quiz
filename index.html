@@ -91,6 +91,10 @@
           <input type="number" class="num-input" v-model.number="randomCount" min="1" :max="filteredQuestions.length">
           <button class="btn btn-warning btn-sm" @click="startRandom">🎲 抽题</button>
         </div>
+        <div class="filter-group">
+          <span class="filter-label">重刷</span>
+          <button class="btn btn-ghost btn-sm" @click="resetCurrentFilter" :disabled="!filteredQuestions.length">🔄 当前筛选</button>
+        </div>
       </div>
 
       <!-- 队列来源提示 -->
@@ -124,7 +128,21 @@
           </div>
         </div>
 
-        <!-- 结果与解析 -->
+        <!-- 操作按钮 -->
+        <!-- 主操作（上一题 / 提交 / 下一题）：PC 在上，移动端吸底 -->
+        <div class="controls controls-bottom">
+          <button class="btn btn-ghost" @click="prev" :disabled="currentIndex===0">◀ 上一题</button>
+          <button class="btn btn-primary" @click="submitAnswer" :disabled="!hasSelection || isSubmitted">提交</button>
+          <button class="btn btn-ghost" @click="next" :disabled="currentIndex>=currentQueue.length-1">下一题 ▶</button>
+        </div>
+
+        <!-- 次要操作（重置 / 查看答案）：内联，始终在其下方 -->
+        <div class="controls controls-inline">
+          <button class="btn btn-warning" @click="resetAnswer">重置</button>
+          <button class="btn btn-danger" @click="showAnswer" v-if="!isSubmitted">查看答案</button>
+        </div>
+
+        <!-- 结果与解析（放在按钮之后，保证提交后按钮位置不变） -->
         <div class="result" v-if="isSubmitted">
           <div class="result-line" :class="isPeeked ? 'peek' : (isCurrentCorrect ? 'ok' : 'bad')">
             <template v-if="isPeeked">👁 已查看答案 · 正确答案：{{ correctKeysDisplay.join('、') }}</template>
@@ -138,15 +156,6 @@
             <div class="exp-text">{{ currentQuestion.explanation || '暂无解析' }}</div>
           </div>
         </div>
-
-        <!-- 操作按钮 -->
-        <div class="controls">
-          <button class="btn btn-ghost" @click="prev" :disabled="currentIndex===0">◀ 上一题</button>
-          <button class="btn btn-warning" @click="resetAnswer">重置</button>
-          <button class="btn btn-primary" @click="submitAnswer" :disabled="!hasSelection || isSubmitted">提交</button>
-          <button class="btn btn-danger" @click="showAnswer" v-if="!isSubmitted">查看答案</button>
-          <button class="btn btn-ghost" @click="next" :disabled="currentIndex>=currentQueue.length-1">下一题 ▶</button>
-        </div>
       </div>
 
       <div class="empty" v-else>
@@ -158,16 +167,26 @@
     <!-- ============ 错题本 ============ -->
     <template v-else-if="view==='wrongbook'">
       <div class="list-head">
-        <h2>❌ 错题本（{{ wrongQuestions.length }}）</h2>
-        <button class="btn btn-primary btn-sm" @click="startWrongRedo" :disabled="!wrongQuestions.length">🔀 重做错题</button>
+        <h2>❌ 错题本（{{ wrongQuestionsFiltered.length }}）</h2>
+        <button class="btn btn-primary btn-sm" @click="startWrongRedo" :disabled="!wrongQuestionsFiltered.length">🔀 重做错题</button>
+      </div>
+      <!-- 科目筛选 -->
+      <div class="filter-bar wrongbook-filter">
+        <div class="filter-group">
+          <span class="filter-label">科目</span>
+          <button class="chip" :class="{on: wrongSubjectId==='all'}" @click="wrongSubjectId='all'">全部</button>
+          <button v-for="s in wrongSubjects" :key="s.id"
+                  class="chip" :class="{on: wrongSubjectId===s.id}"
+                  @click="wrongSubjectId=s.id">{{ s.name }}</button>
+        </div>
       </div>
       <div class="list">
-        <div v-for="q in wrongQuestions" :key="q.id" class="list-item" @click="openInPractice(q.id)">
+        <div v-for="q in wrongQuestionsFiltered" :key="q.id" class="list-item" @click="openInPractice(q.id)">
           <span class="q-type-tag">{{ TYPE_LABEL[q.type] }}</span>
           <span class="list-title">{{ q.stem }}</span>
           <button class="list-del" @click.stop="removeFromWrong(q.id)" title="移出错题本">✕</button>
         </div>
-        <div class="empty" v-if="!wrongQuestions.length"><p>🎉 还没有错题，去练习吧</p></div>
+        <div class="empty" v-if="!wrongQuestionsFiltered.length"><p>🎉 当前筛选下没有错题</p></div>
       </div>
     </template>
 

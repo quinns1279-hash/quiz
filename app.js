@@ -2,7 +2,7 @@
  * 数据：window.EXAM_BANK（由 exam-bank.js 提供，离线可用）
  * 存储：localStorage（个人用量足够，简单可靠）
  */
-const { createApp, ref, computed, watch, onMounted } = Vue;
+const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
 
 // ---------- 本地存储封装 ----------
 const LS = {
@@ -141,11 +141,26 @@ createApp({
       });
       if (attempts.value.length > 3000) attempts.value = attempts.value.slice(-3000);
       LS.set('attempts', attempts.value);
-      if (!correct && !wrongIds.value.includes(q.id)) {
-        wrongIds.value.push(q.id);
-        LS.set('wrongIds', wrongIds.value);
+      if (correct) {
+        // 答对：从错题本移除（如果存在）
+        const idx = wrongIds.value.indexOf(q.id);
+        if (idx !== -1) {
+          wrongIds.value.splice(idx, 1);
+          LS.set('wrongIds', wrongIds.value);
+        }
+      } else {
+        // 答错：加入错题本（如果不存在）
+        if (!wrongIds.value.includes(q.id)) {
+          wrongIds.value.push(q.id);
+          LS.set('wrongIds', wrongIds.value);
+        }
       }
       saveLastSession();
+      // 提交后自动滚动到解析区（PC 端体验优化）
+      nextTick(() => {
+        const resultEl = document.querySelector('.result');
+        if (resultEl) resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
     }
     function showAnswer() {
       const q = currentQuestion.value;
@@ -213,6 +228,18 @@ createApp({
       favoriteIds.value.map(id => allQuestions.find(q => q.id === id)).filter(Boolean)
     );
 
+    // ---------- 错题本科目筛选 ----------
+    const wrongSubjectId = ref('all');  // 'all' 或具体科目 ID
+    const wrongSubjects = computed(() => {
+      // 找出有错题的科目（subjects 是普通数组，不是 ref）
+      const subjIds = new Set(wrongQuestions.value.map(q => q.subjectId));
+      return subjects.filter(s => subjIds.has(s.id));
+    });
+    const wrongQuestionsFiltered = computed(() => {
+      if (wrongSubjectId.value === 'all') return wrongQuestions.value;
+      return wrongQuestions.value.filter(q => q.subjectId === wrongSubjectId.value);
+    });
+
     function openInPractice(qid) {
       const q = allQuestions.find(x => x.id === qid);
       if (!q) return;
@@ -226,9 +253,19 @@ createApp({
       saveLastSession();
     }
     function startWrongRedo() {
-      const list = wrongQuestions.value.slice();
+      // 使用当前筛选的错题列表（按科目）
+      const list = wrongQuestionsFiltered.value.slice();
       shuffle(list);
       if (!list.length) return;
+      // 清空当前筛选错题范围的答题状态
+      list.forEach(q => {
+        delete sessionAnswers.value[q.id];
+        delete sessionSubmitted.value[q.id];
+        delete sessionPeeked.value[q.id];
+      });
+      LS.set('sessionAnswers', sessionAnswers.value);
+      LS.set('sessionSubmitted', sessionSubmitted.value);
+      LS.set('sessionPeeked', sessionPeeked.value);
       queue.value = list;
       currentIndex.value = 0;
       view.value = 'practice';
@@ -264,6 +301,23 @@ createApp({
       currentIndex.value = 0;
       view.value = 'practice';
       saveLastSession();
+    }
+
+    // 批量重刷当前筛选范围：清空答题状态，错题本不清
+    function resetCurrentFilter() {
+      const ids = filteredQuestions.value.map(q => q.id);
+      if (!ids.length) return;
+      ids.forEach(qid => {
+        delete sessionAnswers.value[qid];
+        delete sessionSubmitted.value[qid];
+        delete sessionPeeked.value[qid];
+      });
+      LS.set('sessionAnswers', sessionAnswers.value);
+      LS.set('sessionSubmitted', sessionSubmitted.value);
+      LS.set('sessionPeeked', sessionPeeked.value);
+      // 清空队列，回到正常列表
+      queue.value = null;
+      currentIndex.value = 0;
     }
 
     // ---------- 统计 ----------
@@ -456,11 +510,12 @@ createApp({
       // 导航
       next, prev, goToPage,
       // 筛选
-      setSubject, setChapter, setType, resetQueue,
+      setSubject, setChapter, setType, resetQueue, resetCurrentFilter,
       // 收藏
       isFavorite, toggleFavorite,
       // 错题/收藏列表
-      wrongQuestions, favoriteQuestions, openInPractice, startWrongRedo, browseFavorites, removeFromWrong,
+      wrongQuestions, wrongSubjectId, wrongSubjects, wrongQuestionsFiltered,
+      favoriteQuestions, openInPractice, startWrongRedo, browseFavorites, removeFromWrong,
       // 随机
       randomCount, startRandom,
       // 统计

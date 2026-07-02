@@ -135,6 +135,7 @@ body {
   width: 64px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--card-2); color: var(--text); font-size: .9rem;
 }
+.wrongbook-filter { margin-bottom: 12px; }
 
 /* ===== 队列提示 ===== */
 .queue-hint {
@@ -263,13 +264,58 @@ body {
   .container { padding: 10px; }
   .stats { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .stat-num { font-size: 1.3rem; }
-  .exam { padding: 14px; }
+  .exam { padding: 14px; display: flex; flex-direction: column; }
   .q-stem { font-size: 1rem; }
-  .controls { flex-direction: column; }
-  .controls .btn { width: 100%; }
   .filter-label { min-width: 32px; }
   .resume-banner { flex-direction: column; align-items: flex-start; }
   .resume-actions { width: 100%; }
   .resume-actions .btn { flex: 1; }
   .list-head { flex-wrap: wrap; gap: 8px; }
+
+  /* 移动端用 order 重排：解析放吸底条之前，避免被吸底条遮挡 */
+  .exam-head { order: 0; }
+  .q-stem { order: 1; }
+  .options { order: 2; }
+  .result { order: 3; }            /* 解析在吸底条之前 */
+  .controls-inline { order: 4; }   /* 重置/查看答案 */
+  .controls-bottom { order: 5; }   /* 吸底三连始终最后 */
+
+  /* 次要操作组（重置 / 查看答案）：内联居中，不吸底 */
+  .controls-inline {
+    justify-content: center;
+    gap: 8px;
+  }
+  .controls-inline .btn {
+    flex: 0 0 auto;
+    padding: 8px 14px;
+    font-size: .85rem;
+  }
+
+  /* 主操作组（上一题 / 提交 / 下一题）：吸底工具条 */
+  .controls-bottom {
+    position: sticky;
+    bottom: 0;
+    z-index: 40;
+    margin: 18px -14px 0;
+    padding: 8px 14px calc(8px + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 12px rgba(0,0,0,.06);
+    justify-content: space-between;
+  }
+  .controls-bottom .btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 9px 6px;
+    font-size: .9rem;
+    white-space: nowrap;
+  }
+
+  /* 解析区底部留点呼吸空间 */
+  .result { padding-bottom: 4px; }
+}
+
+/* 超窄屏（≤360px）兜底 */
+@media (max-width: 360px) {
+  .controls-bottom .btn { font-size: .82rem; padding: 9px 3px; }
 }
