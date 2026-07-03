@@ -1,0 +1,30 @@
+# ===== 题库数据源（本地保留，不提交）=====
+# 原始图片/文档
+英语题库/
+应用文写作题库.png
+应用文写作题库.md
+应用文写作题库-分割图片/
+反馈图片.jpg
+image_parts/
+ocr_full_result.txt
+
+# 其他本地工作目录
+经济学/
+
+# ===== 通用 =====
+# 临时脚本
+parse-*.js
+build-*.js
+english-parser.js
+test-*.js
+debug-*.js
+export-*.js
+merge-*.js
+add-*.js
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
