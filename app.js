@@ -1,6 +1,7 @@
 /* 刷题网页应用 — Vue 3 Composition API
- * 数据：window.EXAM_BANK（由 exam-bank.js 提供，离线可用）
+ * 数据：按科目拆分，subjects/*.js 各科目题库 + subjects.config.js 注册表（离线可用）
  * 存储：localStorage（个人用量足够，简单可靠）
+ * 加载：用户选择科目时按需加载对应题库文件，已加载的缓存复用
  */
 const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
 
@@ -19,29 +20,67 @@ const LS = {
 
 const TYPE_LABEL = { single: '单选题', multiple: '多选题', judge: '判断题' };
 
+// ---------- 科目题库按需加载（模块级缓存，全局共享）----------
+const bankCache = {}; // {科目id: 题库对象}，已加载的科目题库
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('加载失败: ' + src));
+    document.head.appendChild(s);
+  });
+}
+// 加载某科目题库（已加载则直接返回缓存），返回该科目题库对象
+async function loadSubject(cfg) {
+  if (bankCache[cfg.id]) return bankCache[cfg.id];
+  window.SUBJECT_BANK = window.SUBJECT_BANK || {};
+  if (!window.SUBJECT_BANK[cfg.id]) {
+    await loadScript(cfg.file);
+  }
+  bankCache[cfg.id] = window.SUBJECT_BANK[cfg.id];
+  return bankCache[cfg.id];
+}
+
 createApp({
   setup() {
-    const bank = window.EXAM_BANK;
-    const subjects = bank.subjects;
+    // 注册表（轻量元数据，启动即可用，不含题目）
+    const subjectConfigs = (window.SUBJECTS_CONFIG || []).filter(s => s.enabled);
+    // 兼容旧代码：subjects 提供与注册表等价的元数据（含 chapters 预览，从题库读取）
+    const subjects = subjectConfigs.map(c => ({ id: c.id, name: c.name, chapters: [], _file: c.file }));
 
-    // 扁平化题目索引，附带科目/章节引用，便于筛选与统计
-    const allQuestions = [];
-    subjects.forEach(s => {
-      s.questions.forEach(q => {
-        let chapterId = null, chapterName = null;
-        if (q.chapter) {
-          const ch = (s.chapters || []).find(c => c.name === q.chapter);
-          if (ch) { chapterId = ch.id; chapterName = ch.name; }
-        }
-        allQuestions.push({
-          ...q, subjectId: s.id, subjectName: s.name, chapterId, chapterName,
+    // 已加载科目的标记（响应式，加载完成后触发 computed 重算）
+    const loadedSubjectIds = ref([]);
+
+    // 当前选中科目，默认第一个（首科目在 onMounted 中异步加载）
+    const currentSubjectId = ref(subjects[0].id);
+
+    // 把已加载科目的 chapters 同步到 subjects（供 hasChapters 判断）
+    function syncLoadedMeta() {
+      loadedSubjectIds.value.forEach(id => {
+        const idx = subjects.findIndex(s => s.id === id);
+        if (idx >= 0 && bankCache[id]) subjects[idx].chapters = bankCache[id].chapters || [];
+      });
+    }
+
+    // 扁平化"已加载科目"的题目（附带科目/章节引用）
+    const allQuestions = computed(() => {
+      const list = [];
+      loadedSubjectIds.value.forEach(id => {
+        const s = bankCache[id];
+        if (!s) return;
+        s.questions.forEach(q => {
+          let chapterId = null, chapterName = null;
+          if (q.chapter) {
+            const ch = (s.chapters || []).find(c => c.name === q.chapter);
+            if (ch) { chapterId = ch.id; chapterName = ch.name; }
+          }
+          list.push({ ...q, subjectId: s.id, subjectName: s.name, chapterId, chapterName });
         });
       });
+      return list;
     });
 
     // ---------- 视图与筛选状态 ----------
     const view = ref('practice'); // practice | wrongbook | favorites | records | stats
-    const currentSubjectId = ref(subjects[0].id);
     const currentChapterId = ref('all');
     const currentType = ref('all');
 
@@ -53,7 +92,7 @@ createApp({
     const currentIndex = ref(0);
 
     const filteredQuestions = computed(() =>
-      allQuestions.filter(q =>
+      allQuestions.value.filter(q =>
         (currentSubjectId.value === 'all' || q.subjectId === currentSubjectId.value) &&
         (currentChapterId.value === 'all' || q.chapterId === currentChapterId.value) &&
         (currentType.value === 'all' || q.type === currentType.value)
@@ -197,7 +236,19 @@ createApp({
     function prev() { goToPage(currentIndex.value - 1); }
 
     // ---------- 筛选切换 ----------
-    function setSubject(id) {
+    // 确保某科目已加载（未加载则按需加载，加载后同步元数据并刷新 loadedSubjectIds）
+    async function ensureSubjectLoaded(id) {
+      if (loadedSubjectIds.value.includes(id)) return;
+      const cfg = subjectConfigs.find(c => c.id === id);
+      if (!cfg) return;
+      await loadSubject(cfg);
+      const idx = subjects.findIndex(s => s.id === id);
+      if (idx >= 0 && bankCache[id]) subjects[idx].chapters = bankCache[id].chapters || [];
+      loadedSubjectIds.value = [...loadedSubjectIds.value, id];
+    }
+
+    async function setSubject(id) {
+      await ensureSubjectLoaded(id);
       currentSubjectId.value = id;
       currentChapterId.value = 'all';
       resetQueue();
@@ -220,12 +271,29 @@ createApp({
       LS.set('favoriteIds', favoriteIds.value);
     }
 
+    // 题目id → 科目id 映射（用于错题/收藏定位未加载科目的题目）
+    // 优先从 attempts 历史推断，回退从题目id前缀推断
+    function qidToSubjectId(qid) {
+      const a = attempts.value.find(x => x.qid === qid);
+      if (a) return a.subjectId;
+      // 回退：用题目id第一段(到第一个-)匹配注册表科目
+      const prefix = qid.split('-')[0];
+      const cfg = subjectConfigs.find(c => c.id === prefix);
+      return cfg ? cfg.id : null;
+    }
+
+    // 进入错题本/收藏视图时预加载所有相关科目（确保列表完整）
+    async function ensureRelatedSubjectsLoaded(qids) {
+      const ids = new Set(qids.map(qidToSubjectId).filter(Boolean));
+      await Promise.all([...ids].map(id => ensureSubjectLoaded(id)));
+    }
+
     // ---------- 错题 / 收藏 列表 ----------
     const wrongQuestions = computed(() =>
-      wrongIds.value.map(id => allQuestions.find(q => q.id === id)).filter(Boolean)
+      wrongIds.value.map(id => allQuestions.value.find(q => q.id === id)).filter(Boolean)
     );
     const favoriteQuestions = computed(() =>
-      favoriteIds.value.map(id => allQuestions.find(q => q.id === id)).filter(Boolean)
+      favoriteIds.value.map(id => allQuestions.value.find(q => q.id === id)).filter(Boolean)
     );
 
     // ---------- 错题本科目筛选 ----------
@@ -240,8 +308,10 @@ createApp({
       return wrongQuestions.value.filter(q => q.subjectId === wrongSubjectId.value);
     });
 
-    function openInPractice(qid) {
-      const q = allQuestions.find(x => x.id === qid);
+    async function openInPractice(qid) {
+      const sid = qidToSubjectId(qid);
+      if (sid) await ensureSubjectLoaded(sid);
+      const q = allQuestions.value.find(x => x.id === qid);
       if (!q) return;
       currentSubjectId.value = q.subjectId;
       currentChapterId.value = 'all';
@@ -333,15 +403,24 @@ createApp({
     const scopeIds = computed(() => filteredQuestions.value.map(q => q.id));
     const scopeStat = computed(() => scopeStats(scopeIds.value));
 
-    // 统计视图：按科目 / 题型 / 章节
+    // 进入统计视图时加载全部启用科目（保证按科目/题型统计完整）
+    async function loadAllSubjects() {
+      await Promise.all(subjectConfigs.map(c => ensureSubjectLoaded(c.id)));
+    }
+
+    // 统计视图：按科目 / 题型 / 章节（仅统计已加载科目）
     const statsBySubject = computed(() =>
-      subjects.map(s => ({ label: s.name, ...scopeStats(s.questions.map(q => q.id)) }))
+      loadedSubjectIds.value.map(id => {
+        const s = bankCache[id];
+        const meta = subjects.find(m => m.id === id);
+        return { label: (meta && meta.name) || id, ...scopeStats(s.questions.map(q => q.id)) };
+      })
     );
     const statsByType = computed(() => {
       const types = ['single', 'multiple', 'judge'];
       return types.map(t => ({
         label: TYPE_LABEL[t],
-        ...scopeStats(allQuestions.filter(q => q.type === t).map(q => q.id)),
+        ...scopeStats(allQuestions.value.filter(q => q.type === t).map(q => q.id)),
       }));
     });
     const statsByChapter = computed(() => {
@@ -350,7 +429,7 @@ createApp({
       return subj.chapters.map(c => ({
         label: c.name,
         ...scopeStats(
-          allQuestions.filter(q => q.subjectId === subj.id && q.chapterId === c.id).map(q => q.id)
+          allQuestions.value.filter(q => q.subjectId === subj.id && q.chapterId === c.id).map(q => q.id)
         ),
       }));
     });
@@ -363,7 +442,7 @@ createApp({
       try { return new Date(ts).toLocaleString('zh-CN'); } catch (e) { return ''; }
     }
     function qBrief(qid) {
-      const q = allQuestions.find(x => x.id === qid);
+      const q = allQuestions.value.find(x => x.id === qid);
       return q ? `${q.subjectName} · ${TYPE_LABEL[q.type]} · ${q.stem.slice(0, 24)}…` : qid;
     }
     const overallStat = computed(() => {
@@ -385,9 +464,10 @@ createApp({
       };
       LS.set('lastSession', lastSession.value);
     }
-    function resumeLast() {
+    async function resumeLast() {
       const ls = lastSession.value;
       if (!ls) return;
+      await ensureSubjectLoaded(ls.subjectId);
       currentSubjectId.value = ls.subjectId;
       currentChapterId.value = ls.chapterId || 'all';
       currentType.value = ls.type || 'all';
@@ -482,7 +562,7 @@ createApp({
     // ---------- 生命周期 ----------
     watch(currentIndex, () => { if (view.value === 'practice') saveLastSession(); });
 
-    onMounted(() => {
+    onMounted(async () => {
       applyTheme();
       window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if (theme.value === 'auto') applyTheme();
@@ -490,11 +570,22 @@ createApp({
       const ls = lastSession.value;
       if (ls && ls.subjectId) {
         // 恢复筛选以便续做可用，但不自动跳转，仅提示
+        await ensureSubjectLoaded(ls.subjectId);
         currentSubjectId.value = ls.subjectId;
         currentChapterId.value = ls.chapterId || 'all';
         currentType.value = ls.type || 'all';
         showResumeBanner.value = true;
+      } else {
+        // 无续做：加载首科目，保证练习页可用
+        await ensureSubjectLoaded(subjects[0].id);
       }
+    });
+
+    // 切换视图时按需预加载相关科目
+    watch(view, async (v) => {
+      if (v === 'wrongbook') await ensureRelatedSubjectsLoaded(wrongIds.value);
+      else if (v === 'favorites') await ensureRelatedSubjectsLoaded(favoriteIds.value);
+      else if (v === 'stats') await loadAllSubjects();
     });
 
     return {
