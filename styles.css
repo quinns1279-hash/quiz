@@ -158,6 +158,16 @@ body {
 
 /* 选项 */
 .options { display: flex; flex-direction: column; gap: 8px; }
+/* 主观题输入框 */
+.subjective-input {
+  width: 100%; min-height: 140px; padding: 12px 14px;
+  border: 2px solid var(--border); border-radius: 10px;
+  background: var(--card-2); color: var(--text);
+  font-size: 1rem; line-height: 1.6; resize: vertical;
+  font-family: inherit; transition: .15s;
+}
+.subjective-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px var(--accent-glow); }
+.subjective-input:disabled { opacity: .8; background: var(--card); cursor: not-allowed; }
 .option {
   display: flex; gap: 12px; align-items: flex-start;
   border: 2px solid var(--border); background: var(--card-2); border-radius: 10px;

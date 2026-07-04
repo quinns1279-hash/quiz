@@ -17,6 +17,7 @@
     })();
   </script>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <div id="app" v-cloak>
@@ -114,7 +115,8 @@
 
         <div class="q-stem">{{ currentQuestion.stem }}</div>
 
-        <div class="options">
+        <!-- 客观题：选项 -->
+        <div class="options" v-if="!isSubjectiveCurrent">
           <div v-for="opt in currentQuestion.options" :key="opt.key"
                class="option"
                :class="{
@@ -128,33 +130,55 @@
           </div>
         </div>
 
+        <!-- 主观题（名词解释/问答）：输入框作答 -->
+        <div class="options" v-else>
+          <textarea class="subjective-input"
+                    v-model="subjectiveInput"
+                    :disabled="isSubmitted"
+                    :placeholder="currentQuestion.type === 'term' ? '请在此写出该名词的解释...' : '请在此写出你的解答...'"
+                    rows="6"></textarea>
+        </div>
+
         <!-- 操作按钮 -->
         <!-- 主操作（上一题 / 提交 / 下一题）：PC 在上，移动端吸底 -->
         <div class="controls controls-bottom">
           <button class="btn btn-ghost" @click="prev" :disabled="currentIndex===0">◀ 上一题</button>
-          <button class="btn btn-primary" @click="submitAnswer" :disabled="!hasSelection || isSubmitted">提交</button>
+          <button class="btn btn-primary" @click="submitAnswer" :disabled="!hasSelection || isSubmitted">
+            {{ isSubjectiveCurrent ? '查看答案' : '提交' }}
+          </button>
           <button class="btn btn-ghost" @click="next" :disabled="currentIndex>=currentQueue.length-1">下一题 ▶</button>
         </div>
 
         <!-- 次要操作（重置 / 查看答案）：内联，始终在其下方 -->
         <div class="controls controls-inline">
           <button class="btn btn-warning" @click="resetAnswer">重置</button>
-          <button class="btn btn-danger" @click="showAnswer" v-if="!isSubmitted">查看答案</button>
+          <button class="btn btn-danger" @click="showAnswer" v-if="!isSubmitted && !isSubjectiveCurrent">查看答案</button>
         </div>
 
         <!-- 结果与解析（放在按钮之后，保证提交后按钮位置不变） -->
         <div class="result" v-if="isSubmitted">
-          <div class="result-line" :class="isPeeked ? 'peek' : (isCurrentCorrect ? 'ok' : 'bad')">
-            <template v-if="isPeeked">👁 已查看答案 · 正确答案：{{ correctKeysDisplay.join('、') }}</template>
-            <template v-else>
-              {{ isCurrentCorrect ? '✅ 回答正确' : '❌ 回答错误' }}
-              <span class="ans" v-if="!isCurrentCorrect">正确答案：{{ correctKeysDisplay.join('、') }}</span>
-            </template>
-          </div>
-          <div class="explanation">
-            <div class="exp-title">💡 解析</div>
-            <div class="exp-text">{{ currentQuestion.explanation || '暂无解析' }}</div>
-          </div>
+          <!-- 主观题结果：显示标准答案，不判对错 -->
+          <template v-if="isSubjectiveCurrent">
+            <div class="result-line peek">👁 已查看标准答案（主观题不判分，请自行对照）</div>
+            <div class="explanation">
+              <div class="exp-title">📖 标准答案</div>
+              <div class="exp-text">{{ subjectiveAnswer }}</div>
+            </div>
+          </template>
+          <!-- 客观题结果：判分 -->
+          <template v-else>
+            <div class="result-line" :class="isPeeked ? 'peek' : (isCurrentCorrect ? 'ok' : 'bad')">
+              <template v-if="isPeeked">👁 已查看答案 · 正确答案：{{ correctKeysDisplay.join('、') }}</template>
+              <template v-else>
+                {{ isCurrentCorrect ? '✅ 回答正确' : '❌ 回答错误' }}
+                <span class="ans" v-if="!isCurrentCorrect">正确答案：{{ correctKeysDisplay.join('、') }}</span>
+              </template>
+            </div>
+            <div class="explanation">
+              <div class="exp-title">💡 解析</div>
+              <div class="exp-text">{{ currentQuestion.explanation || '暂无解析' }}</div>
+            </div>
+          </template>
         </div>
       </div>
 

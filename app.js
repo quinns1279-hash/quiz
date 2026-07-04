@@ -18,7 +18,10 @@ const LS = {
   },
 };
 
-const TYPE_LABEL = { single: '单选题', multiple: '多选题', judge: '判断题' };
+const TYPE_LABEL = { single: '单选题', multiple: '多选题', judge: '判断题', term: '名词解释', essay: '问答题' };
+// 主观题（无客观答案，输入框作答，点查看答案显示标准答案，不判分）
+const SUBJECTIVE_TYPES = ['term', 'essay'];
+const isSubjectiveType = t => SUBJECTIVE_TYPES.includes(t);
 
 // ---------- 科目题库按需加载（模块级缓存，全局共享）----------
 const bankCache = {}; // {科目id: 题库对象}，已加载的科目题库
@@ -149,13 +152,20 @@ createApp({
       if (a == null) return false;
       return Array.isArray(a) ? a.includes(key) : a === key;
     }
+    // 主观题输入框内容（独立 ref，避免污染客观题的 sessionAnswers 逻辑）
+    const subjectiveInput = ref('');
+
     const hasSelection = computed(() => {
-      const a = sessionAnswers.value[currentQuestion.value.id];
+      const q = currentQuestion.value;
+      // 主观题：判断输入框是否有内容
+      if (isSubjectiveType(q.type)) return subjectiveInput.value.trim().length > 0;
+      const a = sessionAnswers.value[q.id];
       if (a == null) return false;
       return Array.isArray(a) ? a.length > 0 : true;
     });
     const isSubmitted = computed(() => !!sessionSubmitted.value[currentQuestion.value.id]);
     const isPeeked = computed(() => !!sessionPeeked.value[currentQuestion.value.id]);
+    const isSubjectiveCurrent = computed(() => isSubjectiveType(currentQuestion.value.type));
     const isCurrentCorrect = computed(() => {
       const q = currentQuestion.value;
       return q.id ? isCorrect(q, sessionAnswers.value[q.id]) : false;
@@ -169,7 +179,24 @@ createApp({
 
     function submitAnswer() {
       const q = currentQuestion.value;
-      if (!q.id || !hasSelection.value || sessionSubmitted.value[q.id]) return;
+      if (!q.id || sessionSubmitted.value[q.id]) return;
+      // 主观题（名词解释/问答）：提交=标记已查看，不判分、不进统计/错题本
+      if (isSubjectiveType(q.type)) {
+        // 保留用户输入的答案文本到 sessionAnswers
+        if (!sessionAnswers.value[q.id]) sessionAnswers.value[q.id] = subjectiveInput.value;
+        sessionSubmitted.value[q.id] = true;
+        sessionPeeked.value[q.id] = true;  // 主观题统一按"已查看答案"标记
+        LS.set('sessionAnswers', sessionAnswers.value);
+        LS.set('sessionSubmitted', sessionSubmitted.value);
+        LS.set('sessionPeeked', sessionPeeked.value);
+        saveLastSession();
+        nextTick(() => {
+          const resultEl = document.querySelector('.result');
+          if (resultEl) resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        return;
+      }
+      if (!hasSelection.value) return;
       const userAns = sessionAnswers.value[q.id];
       const correct = isCorrect(q, userAns);
       sessionSubmitted.value[q.id] = true;
@@ -201,6 +228,11 @@ createApp({
         if (resultEl) resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     }
+    // 主观题标准答案展示文本
+    const subjectiveAnswer = computed(() => {
+      const q = currentQuestion.value;
+      return isSubjectiveType(q.type) ? (q.answer || '暂无标准答案') : '';
+    });
     function showAnswer() {
       const q = currentQuestion.value;
       if (!q.id) return;
@@ -218,6 +250,7 @@ createApp({
       delete sessionAnswers.value[q.id];
       delete sessionSubmitted.value[q.id];
       delete sessionPeeked.value[q.id];
+      subjectiveInput.value = '';
       LS.set('sessionAnswers', sessionAnswers.value);
       LS.set('sessionSubmitted', sessionSubmitted.value);
       LS.set('sessionPeeked', sessionPeeked.value);
@@ -234,6 +267,16 @@ createApp({
     }
     function next() { goToPage(currentIndex.value + 1); }
     function prev() { goToPage(currentIndex.value - 1); }
+
+    // 切题时同步主观题输入框：加载已保存的作答，或清空
+    watch(currentQuestion, (q) => {
+      if (q.id && isSubjectiveType(q.type)) {
+        const saved = sessionAnswers.value[q.id];
+        subjectiveInput.value = typeof saved === 'string' ? saved : '';
+      } else {
+        subjectiveInput.value = '';
+      }
+    }, { immediate: true });
 
     // ---------- 筛选切换 ----------
     // 确保某科目已加载（未加载则按需加载，加载后同步元数据并刷新 loadedSubjectIds）
@@ -598,6 +641,7 @@ createApp({
       // 作答
       sessionAnswers, sessionSubmitted, selectOption, isSelected, hasSelection,
       isSubmitted, isPeeked, isCurrentCorrect, correctKeysDisplay, submitAnswer, showAnswer, resetAnswer,
+      isSubjectiveCurrent, subjectiveInput, subjectiveAnswer,
       // 导航
       next, prev, goToPage,
       // 筛选

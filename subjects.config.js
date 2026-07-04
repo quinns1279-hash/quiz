@@ -28,5 +28,12 @@ window.SUBJECTS_CONFIG = [
     "file": "subjects/english.js",
     "enabled": true,
     "description": ""
+  },
+  {
+    "id": "economics",
+    "name": "经济学",
+    "file": "subjects/economics.js",
+    "enabled": true,
+    "description": "西方微观经济学"
   }
 ];
