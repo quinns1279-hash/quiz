@@ -5,21 +5,21 @@ window.SUBJECTS_CONFIG = [
     "id": "sixiu",
     "name": "教育思修",
     "file": "subjects/sixiu.js",
-    "enabled": true,
+    "enabled": false,
     "description": ""
   },
   {
     "id": "meiyi",
     "name": "美伊冲突",
     "file": "subjects/meiyi.js",
-    "enabled": true,
+    "enabled": false,
     "description": ""
   },
   {
     "id": "yingyongwen",
     "name": "应用文写作",
     "file": "subjects/yingyongwen.js",
-    "enabled": true,
+    "enabled": false,
     "description": ""
   },
   {

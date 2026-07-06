@@ -154,6 +154,37 @@ body {
 .q-subj { color: var(--text-2); font-size: .85rem; }
 .star { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 1.3rem; filter: grayscale(1) opacity(.5); transition: .15s; }
 .star.on { filter: none; }
+.grid-toggle {
+  margin-left: 4px;
+  border: 1px solid var(--border); background: var(--card-2); color: var(--text);
+  cursor: pointer; font-size: .8rem; padding: 4px 10px; border-radius: 8px;
+  transition: .15s; font-weight: 500;
+}
+.grid-toggle:hover { border-color: var(--primary); color: var(--primary); }
+.grid-toggle.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* 题号网格总览 */
+.q-grid-panel { margin-bottom: 14px; }
+.q-grid-stats { font-size: .82rem; color: var(--text-2); margin-bottom: 8px; }
+.q-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  gap: 6px; max-height: 220px; overflow-y: auto;
+  padding: 10px; background: var(--card-2); border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.q-grid-cell {
+  min-height: 34px; padding: 0; border: 1px solid var(--border);
+  background: var(--card); color: var(--text-2); border-radius: 8px;
+  cursor: pointer; font-size: .85rem; transition: .15s; text-align: center;
+}
+.q-grid-cell:hover { border-color: var(--primary); transform: translateY(-1px); }
+.q-grid-cell.correct { background: var(--success-bg); border-color: var(--success); color: var(--success); font-weight: 600; }
+.q-grid-cell.wrong   { background: var(--danger-bg);  border-color: var(--danger);  color: var(--danger);  font-weight: 600; }
+.q-grid-cell.active  { outline: 2px solid var(--primary); outline-offset: 1px; font-weight: 700; }
+@media (max-width: 640px) {
+  .q-grid { grid-template-columns: repeat(auto-fill, minmax(32px, 1fr)); max-height: 180px; }
+}
 .q-stem { font-size: 1.08rem; font-weight: 500; margin-bottom: 16px; white-space: pre-wrap; }
 
 /* 选项 */

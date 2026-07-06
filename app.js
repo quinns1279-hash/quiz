@@ -104,6 +104,48 @@ createApp({
     const currentQueue = computed(() => (queue.value ? queue.value : filteredQuestions.value));
     const currentQuestion = computed(() => currentQueue.value[currentIndex.value] || {});
 
+    // ---------- 题号网格（需求1）----------
+    const showGrid = ref(false);
+    // 题目作答状态：客观题看 attempts 最近记录，主观题已查看=correct
+    function questionStatus(qid, type) {
+      if (isSubjectiveType(type)) {
+        return sessionSubmitted.value[qid] ? 'correct' : 'unset';
+      }
+      const rec = [...attempts.value].reverse().find(a => a.qid === qid);
+      if (!rec) return 'unset';
+      return rec.isCorrect ? 'correct' : 'wrong';
+    }
+    const questionGrid = computed(() =>
+      currentQueue.value.map((q, idx) => ({
+        idx, qid: q.id, num: idx + 1,
+        status: questionStatus(q.id, q.type),
+        isCurrent: idx === currentIndex.value
+      }))
+    );
+    const gridStats = computed(() => {
+      let correct = 0, wrong = 0;
+      questionGrid.value.forEach(g => {
+        if (g.status === 'correct') correct++;
+        else if (g.status === 'wrong') wrong++;
+      });
+      return { total: questionGrid.value.length, correct, wrong, done: correct + wrong };
+    });
+
+    // ---------- 统一列表来源（需求2：错题本/收藏复用筛选）----------
+    const listMode = ref('all');  // 'all' | 'wrong' | 'favorite'
+    const listQuestions = computed(() => {
+      const base = filteredQuestions.value;
+      if (listMode.value === 'wrong') {
+        const wid = new Set(wrongIds.value);
+        return base.filter(q => wid.has(q.id));
+      }
+      if (listMode.value === 'favorite') {
+        const fid = new Set(favoriteIds.value);
+        return base.filter(q => fid.has(q.id));
+      }
+      return base;
+    });
+
     // ---------- 作答状态 ----------
     const sessionAnswers = ref(LS.get('sessionAnswers', {}));   // {qid: answer}
     const sessionSubmitted = ref(LS.get('sessionSubmitted', {})); // {qid: bool}
@@ -276,6 +318,13 @@ createApp({
       } else {
         subjectiveInput.value = '';
       }
+      // 网格展开时，当前题滚动到可视区
+      if (showGrid.value) {
+        nextTick(() => {
+          const cell = document.querySelector('.q-grid-cell.active');
+          if (cell) cell.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+      }
     }, { immediate: true });
 
     // ---------- 筛选切换 ----------
@@ -301,7 +350,7 @@ createApp({
     function resetQueue() {
       queue.value = null;
       currentIndex.value = 0;
-      view.value = 'practice';
+      // 不改 view：筛选切换时应停留在当前视图（如错题本），避免跳回练习页
       saveLastSession();
     }
 
@@ -331,7 +380,7 @@ createApp({
       await Promise.all([...ids].map(id => ensureSubjectLoaded(id)));
     }
 
-    // ---------- 错题 / 收藏 列表 ----------
+    // ---------- 错题 / 收藏 列表（展示用 listQuestions，按 listMode 收窄）----------
     const wrongQuestions = computed(() =>
       wrongIds.value.map(id => allQuestions.value.find(q => q.id === id)).filter(Boolean)
     );
@@ -339,35 +388,25 @@ createApp({
       favoriteIds.value.map(id => allQuestions.value.find(q => q.id === id)).filter(Boolean)
     );
 
-    // ---------- 错题本科目筛选 ----------
-    const wrongSubjectId = ref('all');  // 'all' 或具体科目 ID
-    const wrongSubjects = computed(() => {
-      // 找出有错题的科目（subjects 是普通数组，不是 ref）
-      const subjIds = new Set(wrongQuestions.value.map(q => q.subjectId));
-      return subjects.filter(s => subjIds.has(s.id));
-    });
-    const wrongQuestionsFiltered = computed(() => {
-      if (wrongSubjectId.value === 'all') return wrongQuestions.value;
-      return wrongQuestions.value.filter(q => q.subjectId === wrongSubjectId.value);
-    });
-
     async function openInPractice(qid) {
       const sid = qidToSubjectId(qid);
       if (sid) await ensureSubjectLoaded(sid);
       const q = allQuestions.value.find(x => x.id === qid);
       if (!q) return;
+      // 保留当前章节/题型筛选（不再强制 'all'），仅确保科目对齐该题所属科目
       currentSubjectId.value = q.subjectId;
-      currentChapterId.value = 'all';
-      currentType.value = 'all';
       queue.value = null;
-      const idx = filteredQuestions.value.findIndex(x => x.id === qid);
+      listMode.value = 'all';            // 回到正常列表来源
+      // 索引基于 currentQueue（随筛选响应式更新），避免子集/全集错位
+      await nextTick();
+      const idx = currentQueue.value.findIndex(x => x.id === qid);
       currentIndex.value = idx >= 0 ? idx : 0;
       view.value = 'practice';
       saveLastSession();
     }
     function startWrongRedo() {
-      // 使用当前筛选的错题列表（按科目）
-      const list = wrongQuestionsFiltered.value.slice();
+      // 使用当前筛选的错题列表（listMode='wrong' 下的 listQuestions）
+      const list = listQuestions.value.slice();
       shuffle(list);
       if (!list.length) return;
       // 清空当前筛选错题范围的答题状态
@@ -380,6 +419,14 @@ createApp({
       LS.set('sessionSubmitted', sessionSubmitted.value);
       LS.set('sessionPeeked', sessionPeeked.value);
       queue.value = list;
+      currentIndex.value = 0;
+      view.value = 'practice';
+      saveLastSession();
+    }
+    // 返回正常列表：清队列、listMode 归 all，筛选条件保留（继承错题本里的设置）
+    function backToPractice() {
+      queue.value = null;
+      listMode.value = 'all';
       currentIndex.value = 0;
       view.value = 'practice';
       saveLastSession();
@@ -626,8 +673,8 @@ createApp({
 
     // 切换视图时按需预加载相关科目
     watch(view, async (v) => {
-      if (v === 'wrongbook') await ensureRelatedSubjectsLoaded(wrongIds.value);
-      else if (v === 'favorites') await ensureRelatedSubjectsLoaded(favoriteIds.value);
+      if (v === 'wrongbook') { listMode.value = 'wrong'; await ensureRelatedSubjectsLoaded(wrongIds.value); }
+      else if (v === 'favorites') { listMode.value = 'favorite'; await ensureRelatedSubjectsLoaded(favoriteIds.value); }
       else if (v === 'stats') await loadAllSubjects();
     });
 
@@ -649,8 +696,8 @@ createApp({
       // 收藏
       isFavorite, toggleFavorite,
       // 错题/收藏列表
-      wrongQuestions, wrongSubjectId, wrongSubjects, wrongQuestionsFiltered,
-      favoriteQuestions, openInPractice, startWrongRedo, browseFavorites, removeFromWrong,
+      wrongQuestions, favoriteQuestions, openInPractice, startWrongRedo, browseFavorites, removeFromWrong,
+      backToPractice, listMode, listQuestions, showGrid, questionGrid, gridStats,
       // 随机
       randomCount, startRandom,
       // 统计

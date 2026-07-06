@@ -86,6 +86,8 @@
           <button class="chip" :class="{on: currentType==='single'}" @click="setType('single')">单选</button>
           <button class="chip" :class="{on: currentType==='multiple'}" @click="setType('multiple')">多选</button>
           <button class="chip" :class="{on: currentType==='judge'}" @click="setType('judge')">判断</button>
+          <button class="chip" :class="{on: currentType==='term'}" @click="setType('term')">名词解释</button>
+          <button class="chip" :class="{on: currentType==='essay'}" @click="setType('essay')">问答</button>
         </div>
         <div class="filter-group random-group">
           <span class="filter-label">随机</span>
@@ -100,8 +102,8 @@
 
       <!-- 队列来源提示 -->
       <div class="queue-hint" v-if="queue">
-        <span>🎯 当前为{{ queue.length }}题随机/重做队列</span>
-        <button class="btn btn-ghost btn-sm" @click="resetQueue">返回正常列表</button>
+        <span>🎯 当前为{{ listMode==='wrong' ? '错题重刷' : '随机' }}队列（{{ queue.length }}题）</span>
+        <button class="btn btn-ghost btn-sm" @click="backToPractice">返回正常列表</button>
       </div>
 
       <!-- 题目区 -->
@@ -111,6 +113,17 @@
           <span class="q-type">{{ TYPE_LABEL[currentQuestion.type] }}</span>
           <span class="q-subj">{{ currentQuestion.subjectName }}<span v-if="currentQuestion.chapterName"> · {{ currentQuestion.chapterName.replace(/（.*$/, '') }}</span></span>
           <button class="star" :class="{on: isFavorite(currentQuestion.id)}" @click="toggleFavorite(currentQuestion.id)">⭐</button>
+          <button class="grid-toggle" :class="{on: showGrid}" @click="showGrid = !showGrid" :title="showGrid ? '收起题号' : '题号总览'">{{ showGrid ? '收起' : '题号' }}</button>
+        </div>
+
+        <!-- 题号网格总览（需求1）-->
+        <div class="q-grid-panel" v-if="showGrid">
+          <div class="q-grid-stats">已做 {{ gridStats.done }}/{{ gridStats.total }} · ✅{{ gridStats.correct }} · ❌{{ gridStats.wrong }}</div>
+          <div class="q-grid">
+            <button v-for="g in questionGrid" :key="g.qid"
+                    class="q-grid-cell" :class="[g.status, { active: g.isCurrent }]"
+                    @click="goToPage(g.idx)" :title="'第 ' + g.num + ' 题'">{{ g.num }}</button>
+          </div>
         </div>
 
         <div class="q-stem">{{ currentQuestion.stem }}</div>
@@ -191,26 +204,44 @@
     <!-- ============ 错题本 ============ -->
     <template v-else-if="view==='wrongbook'">
       <div class="list-head">
-        <h2>❌ 错题本（{{ wrongQuestionsFiltered.length }}）</h2>
-        <button class="btn btn-primary btn-sm" @click="startWrongRedo" :disabled="!wrongQuestionsFiltered.length">🔀 重做错题</button>
+        <h2>❌ 错题本（{{ listQuestions.length }}）</h2>
+        <div class="resume-actions">
+          <button class="btn btn-primary btn-sm" @click="startWrongRedo" :disabled="!listQuestions.length">🔀 重做错题</button>
+          <button class="btn btn-ghost btn-sm" @click="backToPractice">返回正常列表</button>
+        </div>
       </div>
-      <!-- 科目筛选 -->
-      <div class="filter-bar wrongbook-filter">
+      <!-- 复用通用筛选条：科目 / 章节 / 题型 -->
+      <div class="filter-bar">
         <div class="filter-group">
           <span class="filter-label">科目</span>
-          <button class="chip" :class="{on: wrongSubjectId==='all'}" @click="wrongSubjectId='all'">全部</button>
-          <button v-for="s in wrongSubjects" :key="s.id"
-                  class="chip" :class="{on: wrongSubjectId===s.id}"
-                  @click="wrongSubjectId=s.id">{{ s.name }}</button>
+          <button v-for="s in subjects" :key="s.id"
+                  class="chip" :class="{on: currentSubjectId===s.id}"
+                  @click="setSubject(s.id)">{{ s.name }}</button>
+        </div>
+        <div class="filter-group" v-if="hasChapters">
+          <span class="filter-label">章节</span>
+          <button class="chip" :class="{on: currentChapterId==='all'}" @click="setChapter('all')">全部</button>
+          <button v-for="c in currentSubject.chapters" :key="c.id"
+                  class="chip" :class="{on: currentChapterId===c.id}"
+                  @click="setChapter(c.id)">{{ c.name.replace(/（.*$/, '') }}</button>
+        </div>
+        <div class="filter-group">
+          <span class="filter-label">题型</span>
+          <button class="chip" :class="{on: currentType==='all'}" @click="setType('all')">全部</button>
+          <button class="chip" :class="{on: currentType==='single'}" @click="setType('single')">单选</button>
+          <button class="chip" :class="{on: currentType==='multiple'}" @click="setType('multiple')">多选</button>
+          <button class="chip" :class="{on: currentType==='judge'}" @click="setType('judge')">判断</button>
+          <button class="chip" :class="{on: currentType==='term'}" @click="setType('term')">名词解释</button>
+          <button class="chip" :class="{on: currentType==='essay'}" @click="setType('essay')">问答</button>
         </div>
       </div>
       <div class="list">
-        <div v-for="q in wrongQuestionsFiltered" :key="q.id" class="list-item" @click="openInPractice(q.id)">
+        <div v-for="q in listQuestions" :key="q.id" class="list-item" @click="openInPractice(q.id)">
           <span class="q-type-tag">{{ TYPE_LABEL[q.type] }}</span>
           <span class="list-title">{{ q.stem }}</span>
           <button class="list-del" @click.stop="removeFromWrong(q.id)" title="移出错题本">✕</button>
         </div>
-        <div class="empty" v-if="!wrongQuestionsFiltered.length"><p>🎉 当前筛选下没有错题</p></div>
+        <div class="empty" v-if="!listQuestions.length"><p>🎉 当前筛选下没有错题</p></div>
       </div>
     </template>
 
