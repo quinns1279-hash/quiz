@@ -3,7 +3,7 @@
  * 存储：localStorage（个人用量足够，简单可靠）
  * 加载：用户选择科目时按需加载对应题库文件，已加载的缓存复用
  */
-const { createApp, ref, computed, watch, onMounted, nextTick } = Vue;
+const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue;
 
 // ---------- 本地存储封装 ----------
 const LS = {
@@ -48,7 +48,8 @@ createApp({
     // 注册表（轻量元数据，启动即可用，不含题目）
     const subjectConfigs = (window.SUBJECTS_CONFIG || []).filter(s => s.enabled);
     // 兼容旧代码：subjects 提供与注册表等价的元数据（含 chapters 预览，从题库读取）
-    const subjects = subjectConfigs.map(c => ({ id: c.id, name: c.name, chapters: [], _file: c.file }));
+    // 用 reactive 包裹：科目加载后给 chapters 赋值能触发 hasChapters 等依赖更新，章节筛选才会显示
+    const subjects = reactive(subjectConfigs.map(c => ({ id: c.id, name: c.name, chapters: [], _file: c.file })));
 
     // 已加载科目的标记（响应式，加载完成后触发 computed 重算）
     const loadedSubjectIds = ref([]);
@@ -659,11 +660,10 @@ createApp({
       });
       const ls = lastSession.value;
       if (ls && ls.subjectId) {
-        // 恢复筛选以便续做可用，但不自动跳转，仅提示
+        // 仅恢复科目并提示，不自动恢复章节/题型筛选，避免页面打开后题数被静默缩减；
+        // 用户点"继续"时由 resumeLast() 跳转到上次的章节与位置。
         await ensureSubjectLoaded(ls.subjectId);
         currentSubjectId.value = ls.subjectId;
-        currentChapterId.value = ls.chapterId || 'all';
-        currentType.value = ls.type || 'all';
         showResumeBanner.value = true;
       } else {
         // 无续做：加载首科目，保证练习页可用
